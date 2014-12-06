@@ -14,39 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with Sibyl. If not, see <http://www.gnu.org/licenses/>.
 
+FROM miasm/tested:latest
+MAINTAINER Camille Mougey <camille.mougey@cea.fr>
 
-from sibyl.abi import abi
+# Get Sibyl
+USER root
+ADD https://github.com/cea-sec/Sibyl/archive/master.tar.gz /opt/Sibyl.tar.gz
+RUN cd /opt &&\
+    tar xzvf Sibyl.tar.gz &&\
+    rm Sibyl.tar.gz &&\
+    mv Sibyl-master Sibyl &&\
+    chown -Rh miasm2 Sibyl
 
+# Prepare the environment
+WORKDIR /opt/Sibyl
+USER miasm2
 
-class ABIRegsStack_x86(abi.ABIRegsStack):
-
-    def set_ret(self, ret_addr):
-        self.vm_push(ret_addr)
-
-
-class ABIStdCall_x86_32(ABIRegsStack_x86):
-
-    regs_mapping = [] # Stack only
-    RTL = True
-
-    def vm_push(self, element):
-        self.jitter.push_uint32_t(element)
-
-
-class ABIFastCall_x86_32(ABIRegsStack_x86):
-
-    regs_mapping = ["ECX", "EDX"]
-
-    def vm_push(self, element):
-        self.jitter.push_uint32_t(element)
-
-
-class ABI_AMD64(ABIRegsStack_x86):
-
-    regs_mapping = ["RDI", "RSI", "RDX", "RCX", "R8", "R9"]
-
-    def vm_push(self, element):
-        self.jitter.push_uint64_t(element)
-
-
-ABIS = [ABIStdCall_x86_32, ABIFastCall_x86_32, ABI_AMD64]
+CMD ["/usr/bin/python", "find.py", "-h"]
