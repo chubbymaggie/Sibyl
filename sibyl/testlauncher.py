@@ -22,42 +22,29 @@ import signal
 import logging
 from miasm2.analysis.binary import Container
 
-
-class TimeoutException(Exception):
-    """Exception to be called on timeouts"""
-    pass
-
+from sibyl.commons import init_logger, TimeoutException, END_ADDR
+from sibyl.engine import QEMUEngine, MiasmEngine
 
 class TestLauncher(object):
     "Launch tests for a function and report matching candidates"
 
-    def __init__(self, filename, machine, abicls, tests_cls, jitter_engine,
+    def __init__(self, filename, machine, abicls, tests_cls, engine_name,
                  map_addr=0):
 
         # Logging facilities
-        self.init_logger()
+        self.logger = init_logger("testlauncher")
 
         # Prepare JiT engine
         self.machine = machine
-        self.init_jit(jitter_engine)
+        self.init_engine(engine_name)
 
         # Init and snapshot VM
         self.load_vm(filename, map_addr)
-        self.save_vm()
+        self.snapshot = self.engine.take_snapshot()
 
         # Init tests
         self.init_abi(abicls)
         self.initialize_tests(tests_cls)
-
-    def init_logger(self):
-        self.logger = logging.getLogger("testlauncher")
-
-        console_handler = logging.StreamHandler()
-        log_format = "%(levelname)-5s: %(message)s"
-        console_handler.setFormatter(logging.Formatter(log_format))
-        self.logger.addHandler(console_handler)
-
-        self.logger.setLevel(logging.ERROR)
 
     def initialize_tests(self, tests_cls):
         tests = []
@@ -71,97 +58,55 @@ class TestLauncher(object):
         self.jitter.cpu.init_regs()
         self.jitter.init_stack()
 
-    def save_vm(self):
-        self.vm_mem = self.jitter.vm.get_all_memory()
-        self.vm_regs = self.jitter.cpu.get_gpreg()
-
-    def restore_vm(self, reset_mem=True):
-        # Restore memory
-        if reset_mem:
-            self.jitter.vm.reset_memory_page_pool()
-            for addr, metadata in self.vm_mem.items():
-                self.jitter.vm.add_memory_page(addr,
-                                                  metadata["access"],
-                                                  metadata["data"])
-
-        # Restore registers
-        self.jitter.cpu.init_regs()
-        self.jitter.cpu.set_gpreg(self.vm_regs)
-
-    @staticmethod
-    def _code_sentinelle(jitter):
-        jitter.run = False
-        jitter.pc = 0
-        return True
-
-    @staticmethod
-    def _timeout(signum, frame):
-        raise TimeoutException()
-
-    def init_jit(self, jit_engine):
-        jitter = self.machine.jitter(jit_engine)
-        jitter.set_breakpoint(0x1337beef, TestLauncher._code_sentinelle)
-        self.jitter = jitter
-
-        # Signal handling
-        #
-        # Due to Python signal handling implementation, signals aren't handled
-        # nor passed to Jitted code in case of registration with signal API
-        if jit_engine == "python":
-            signal.signal(signal.SIGALRM, TestLauncher._timeout)
-        elif jit_engine in ["llvm", "tcc"]:
-            self.jitter.vm.set_alarm()
+    def init_engine(self, engine_name):
+        if engine_name == "qemu":
+            self.engine = QEMUEngine(self.machine)
+        else:
+            self.engine = MiasmEngine(self.machine, engine_name)
+        self.jitter = self.engine.jitter
 
     def init_abi(self, abicls):
         ira = self.machine.ira()
         self.abi = abicls(self.jitter, ira)
 
-    def reset_state(self, reset_mem=True):
-        self.restore_vm(reset_mem)
-        self.jitter.vm.set_exception(0)
-        self.abi.reset()
-
     def launch_tests(self, test, address, timeout_seconds=0):
+        # Variables to remind between two "launch_test"
+        self._temp_reset_mem = True
+
         # Reset between functions
-        good = True
-        reset_mem = True
         test.reset_full()
 
-        # Launch subtests
-        for (init, check) in test.tests:
-            # Reset VM
-            self.reset_state(reset_mem=reset_mem)
+        # Callback to launch
+        def launch_test(init, check):
+            """Launch a test associated with @init, @check"""
+
+            # Reset state
+            self.engine.restore_snapshot(memory=self._temp_reset_mem)
+            self.abi.reset()
             test.reset()
 
             # Prepare VM
             init(test)
-            self.abi.prepare_call(ret_addr=0x1337beef)
-            self.jitter.init_run(address)
+            self.abi.prepare_call(ret_addr=END_ADDR)
 
             # Run code
-            try:
-                signal.alarm(timeout_seconds)
-                self.jitter.continue_run()
-            except (AssertionError, RuntimeError, ValueError,
-                    KeyError, IndexError, TimeoutException) as _:
-                good = False
-            except Exception as error:
-                self.logger.error("ERROR: %x: %s" % (address, error))
-                good = False
-            finally:
-                signal.alarm(0)
+            status = self.engine.run(address, timeout_seconds)
+            if not status:
+                # Early quit
+                self._temp_reset_mem = True
+                return False
 
-            if not good:
-                break
-
-            if check(test) is not True:
-                good = False
-                break
+            # Check result
+            to_ret = check(test)
 
             # Update flags
-            reset_mem = test.reset_mem
+            self._temp_reset_mem = test.reset_mem
 
-        if good:
+            return to_ret
+
+        # Launch subtests
+        status = test.tests.execute(launch_test)
+        if status:
             self._possible_funcs.append(test.func)
 
     def run(self, address, *args, **kwargs):
@@ -171,6 +116,7 @@ class TestLauncher(object):
         self.logger.info("Launch tests (%d available functions)" % (nb_tests))
         starttime = time.time()
 
+        self.engine.prepare_run()
         for test in self.tests:
             self.launch_tests(test, address, *args, **kwargs)
 
