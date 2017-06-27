@@ -18,6 +18,9 @@
 class ABI(object):
     "Parent class, stand for an ABI"
 
+    # Associated architectures
+    arch = []
+
     def __init__(self, jitter, ira):
         self.jitter = jitter
         self.ira = ira
@@ -48,14 +51,13 @@ class ABIRegsStack(ABI):
 
     regs_mapping = None # Register mapping (list of str)
     args = None         # order => element
-    RTL = False         # RightToLeft arguments pushing
 
     def __init__(self, *args, **kwargs):
         super(ABIRegsStack, self).__init__(*args, **kwargs)
         self.args = {}
 
     def add_arg(self, number, element):
-        if isinstance(element, int):
+        if isinstance(element, (int, long)):
             self.args[number] = element
         else:
             raise NotImplementedError()
@@ -69,10 +71,8 @@ class ABIRegsStack(ABI):
     def prepare_call(self, ret_addr):
         # Get args
         numbers = sorted(self.args.keys())
-        if self.RTL:
-            numbers = numbers[::-1]
 
-        for i, key in enumerate(numbers):
+        for i, key in reversed(list(enumerate(numbers))):
             element = self.args[key]
 
             if i < len(self.regs_mapping):

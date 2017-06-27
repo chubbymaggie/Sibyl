@@ -13,50 +13,49 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with Sibyl. If not, see <http://www.gnu.org/licenses/>.
-import sys
 import os
+import json
 import subprocess
 import time
 
 from idaapi import *
-import idautils
-
-from sibyl.test import AVAILABLE_TESTS
 
 # Find SIBYL find.py
-cur_script = sys.argv[0]
-identify_binary = os.path.join(os.path.dirname(cur_script), "find.py")
+identify_binary = "sibyl"
 env = os.environ
 
 # Sibyl launching
-def parse_output(command_line):
-    """Parse the output of find.py"""
-
+def exec_cmd(command_line):
+    """Launch the command line @command_line"""
+    global env
     process = subprocess.Popen(command_line,
                                stdout=subprocess.PIPE,
                                env=env)
 
-    while True:
-        line = process.stdout.readline()
-        line = line.strip()
-
-        if not line and process.poll() != None:
-            # No more output, end reached
-            break
-
-        if " : " not in line:
-            print "Unable to parse '%s'" % line
-            continue
-
-        infos = line.split(" : ")
-        addr = int(infos[0], 0)
-        candidates = infos[1].split(",")
-        yield addr, candidates
-
+    result, _ = process.communicate()
 
     if process.returncode != 0:
         # An error occured
         raise RuntimeError("An error occured, please consult the console")
+
+    return result
+
+def available_tests():
+    """Get the available tests"""
+    global identify_binary
+    command_line = [identify_binary, "config", "-V", "available_tests_keys"]
+    return eval(exec_cmd(command_line))
+
+AVAILABLE_TESTS = available_tests()
+
+def parse_output(command_line):
+    """Parse the output of find.py"""
+    result = exec_cmd(command_line)
+
+    for result in json.loads(result)["results"]:
+        address, candidates = result["address"], result["functions"]
+        if candidates:
+            yield address, map(str, candidates)
 
 
 def handle_found(addr, candidates):
@@ -70,7 +69,7 @@ def handle_found(addr, candidates):
 
 
 def launch_on_funcs(architecture, abi, funcs, test_set, map_addr=None,
-                    jitter="tcc", buf_size=2000):
+                    jitter=None, buf_size=2000):
     """Launch identification on functions.
     @architecture: str standing for current architecture
     @abi: str standing for expected ABI
@@ -79,7 +78,7 @@ def launch_on_funcs(architecture, abi, funcs, test_set, map_addr=None,
     Optional arguments:
     @map_addr: (optional) the base address where the binary has to be loaded if
     format is not recognized
-    @jitter: (optional) jitter engine to use (tcc, llvm, python)
+    @jitter: (optional) jitter engine to use (gcc, tcc, llvm, python, qemu)
     @buf_size: (optional) number of argument to pass to each instance of sibyl.
     High number means speed; low number means less ressources and higher
     frequency of report
@@ -103,16 +102,20 @@ def launch_on_funcs(architecture, abi, funcs, test_set, map_addr=None,
 
     # Launch identification
     print "Launch identification on %d function(s)" % nb_func
-    options = ["-j", jitter, "-q", "-t"] + test_set + ["-a", architecture]
+    options = ["-a", architecture, "-b", abi, "-o", "JSON"]
+    for test_name in test_set:
+        options += ["-t", test_name]
+    if jitter is not None:
+        options += ["-j", jitter]
     options += add_map
     res = {}
 
     for i in xrange(0, len(funcs), buf_size):
         # Build command line
         addresses = funcs[i:i + buf_size]
-        command_line = ["python", identify_binary]
+        command_line = [identify_binary, "find"]
         command_line += options
-        command_line += [filename, abi]
+        command_line += [filename]
         command_line += addresses
 
         # Call Sibyl and keep only stdout
@@ -247,13 +250,15 @@ Testsets to use:
         return name
 
     IDAABI2SibylABI = {
-        "x86_64": "ABI_AMD64",
         "arml": "ABI_ARM",
         "mips32l": "ABI_MIPS_O32",
         "x86_32": {
             "__cdecl": "ABIStdCall_x86_32",
             "__stdcall": "ABIStdCall_x86_32",
             "__fastcall": "ABIFastCall_x86_32",
+        },
+        "x86_64": {
+            "__fastcall": "ABI_AMD64_SYSTEMV",
         },
     }
 
@@ -293,8 +298,6 @@ Testsets to use:
     def tests(self):
         """Return the list of test to launch"""
         bitfield = self.cTest.value
-        if bitfield == (1 << len(AVAILABLE_TESTS)) - 1:
-            return ["all"]
         tests = []
         for i, test in enumerate(AVAILABLE_TESTS):
             if bitfield & (1 << i):

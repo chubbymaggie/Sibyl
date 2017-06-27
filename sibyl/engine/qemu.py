@@ -147,6 +147,15 @@ class UcWrapVM(object):
 
         return dico
 
+    def is_mapped(self, address, size):
+        for addr in xrange(address, address + size):
+            for page in self.mem_page:
+                if page["addr"] <= addr < page["addr"] + page["size"]:
+                    break
+            else:
+                return False
+        return True
+
     def restore_mem_state(self, mem_state):
         """Restore the memory state according to mem_state
         Optimisation: only consider memory unwrittable"""
@@ -183,6 +192,8 @@ class UcWrapCPU(object):
     # PC registers, name and Uc value
     pc_reg_name = None
     pc_reg_value = None
+    # Registers mask (int -> uint)
+    reg_mask = None
 
     # (arch, attrib) -> CPU class
     available_cpus = {}
@@ -210,7 +221,7 @@ class UcWrapCPU(object):
 
     def __getattr__(self, name):
         if name in self.regs:
-            return self.mu.reg_read(self.regs[name])
+            return self.mu.reg_read(self.regs[name]) & self.reg_mask
         elif name == self.pc_reg_name:
             return self.mu.reg_read(self.pc_reg_value)
         else:
@@ -230,6 +241,8 @@ class UcWrapCPU(object):
 
 class UcWrapCPU_x86_32(UcWrapCPU):
 
+    reg_mask = 0xFFFFFFFF
+
     if unicorn:
         uc_arch = unicorn.UC_ARCH_X86
         uc_mode = unicorn.UC_MODE_32
@@ -248,6 +261,8 @@ class UcWrapCPU_x86_32(UcWrapCPU):
 
 
 class UcWrapCPU_x86_64(UcWrapCPU):
+
+    reg_mask = 0xFFFFFFFFFFFFFFFF
 
     if unicorn:
         uc_arch = unicorn.UC_ARCH_X86
@@ -271,6 +286,8 @@ class UcWrapCPU_x86_64(UcWrapCPU):
 
 
 class UcWrapCPU_arml(UcWrapCPU):
+
+    reg_mask = 0xFFFFFFFF
 
     if unicorn:
         uc_arch = unicorn.UC_ARCH_ARM
@@ -303,6 +320,8 @@ class UcWrapCPU_armb(UcWrapCPU_arml):
 
 
 class UcWrapCPU_mips32l(UcWrapCPU):
+
+    reg_mask = 0xFFFFFFFF
 
     if unicorn:
         uc_arch = unicorn.UC_ARCH_MIPS
@@ -387,6 +406,7 @@ class UcWrapCPU_mips32l(UcWrapCPU):
         }
         self.pc_reg_name = "PC"
         self.pc_reg_value = csts.UC_MIPS_REG_PC
+        super(self.__class__, self).__init__(*args, **kwargs)
 
 
 class UcWrapCPU_mips32b(UcWrapCPU):

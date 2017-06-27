@@ -18,6 +18,11 @@
 import random
 from miasm2.jitter.csts import PAGE_READ, PAGE_WRITE
 from miasm2.expression.modint import mod_size2int
+from miasm2.expression.simplifications import expr_simp
+from miasm2.core.objc import CTypesManagerNotPacked, CHandler
+from miasm2.core.ctypesmngr import CAstTypes
+from miasm2.arch.x86.ctype import CTypeAMD64_unk
+from sibyl.commons import HeaderFile
 
 
 class Test(object):
@@ -52,6 +57,21 @@ class Test(object):
         self.jitter = jitter
         self.alloc_pool = 0x20000000
         self.abi = abi
+
+    def _reserv_mem(self, size, read=True, write=False):
+        right = 0
+        if read:
+            right |= PAGE_READ
+        if write:
+            right |= PAGE_WRITE
+
+        # Memory alignement
+        size += 16 - size % 16
+
+        to_ret = self.alloc_pool
+        self.alloc_pool += size + 1
+
+        return to_ret
 
     def __alloc_mem(self, mem, read=True, write=False):
         right = 0
@@ -101,6 +121,15 @@ class Test(object):
         except RuntimeError:
             return False
 
+    def _ensure_mem_sparse(self, addr, element, offsets):
+        """@offsets: offsets to ignore"""
+        for i, sub_element in enumerate(element):
+            if i in offsets:
+                continue
+            if not self._ensure_mem(addr + i, sub_element):
+                return False
+        return True
+
     def _as_int(self, element):
         int_size = self.abi.ira.sizeof_int()
         max_val = 2**int_size
@@ -126,7 +155,7 @@ class Test(object):
             element >>= 8
         if len(out) > size / 8:
             raise ValueError("To big to be packed")
-        out = "\x00" * ((size / 8) - len(out)) + out
+        out = out + "\x00" * ((size / 8) - len(out))
         return out
 
     @staticmethod
@@ -236,3 +265,52 @@ class TestSetGenerator(TestSet):
             if not callback(init, check):
                 return False
         return True
+
+
+class TestHeader(Test):
+    """Test extension with support for header parsing, and handling of struct
+    offset, size, ...
+    """
+
+    header = None
+
+    def __init__(self, *args, **kwargs):
+        super(TestHeader, self).__init__(*args, **kwargs)
+        ctype_manager = CTypesManagerNotPacked(CAstTypes(), CTypeAMD64_unk())
+
+        hdr = HeaderFile(self.header, ctype_manager)
+        proto = hdr.functions[self.func]
+        self.c_handler = CHandler(hdr.ctype_manager,
+                                  {'arg%d_%s' % (i, name): proto.args[name]
+                                   for i, name in enumerate(proto.args_order)})
+        self.cache_sizeof = {}
+        self.cache_trad = {}
+        self.cache_field_addr = {}
+
+    def sizeof(self, Clike):
+        ret = self.cache_sizeof.get(Clike, None)
+        if ret is None:
+            ret = self.c_handler.c_to_type(Clike).size * 8
+            self.cache_sizeof[Clike] = ret
+        return ret
+
+    def trad(self, Clike):
+        ret = self.cache_trad.get(Clike, None)
+        if ret is None:
+            ret = self.c_handler.c_to_expr(Clike)
+            self.cache_trad[Clike] = ret
+        return ret
+
+    def field_addr(self, base, Clike, is_ptr=False):
+        key = (base, Clike, is_ptr)
+        ret = self.cache_field_addr.get(key, None)
+        if ret is None:
+            base_expr = self.trad(base)
+            if is_ptr:
+                access_expr = self.trad(Clike)
+            else:
+                access_expr = self.trad("&(%s)" % Clike)
+            offset = int(expr_simp(access_expr - base_expr))
+            ret = offset
+            self.cache_field_addr[key] = ret
+        return ret
