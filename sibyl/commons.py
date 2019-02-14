@@ -55,15 +55,23 @@ class HeaderFile(object):
         self.data = header_data
         self.ctype_manager = ctype_manager
 
-        # We can't use add_c_decl, because we need the AST to get back
-        # function's arguments name
-        self.ast = c_to_ast(header_data)
+        self.ast = self.parse_header(header_data)
         self.ctype_manager.types_ast.add_c_decl(header_data)
         self.functions = {} # function name -> FuncPrototype
 
         if pycparser is None:
             raise ImportError("pycparser module is needed to parse header file")
         self.parse_functions()
+
+    @staticmethod
+    def parse_header(header_data):
+        """Return the AST corresponding to @header_data
+        @header_data: str of a C-like header file
+        """
+        # We can't use add_c_decl, because we need the AST to get back
+        # function's arguments name
+        parser = pycparser.c_parser.CParser()
+        return c_to_ast(parser, header_data)
 
     def parse_functions(self):
         """Search for function declarations"""
@@ -80,7 +88,7 @@ class HeaderFile(object):
             args = {}
             for i, param in enumerate(ext.type.args.params):
                 args_order.append(param.name)
-                args[param.name] = objc_func.args[i]
+                args[param.name] = objc_func.args[i][1]
 
             self.functions[func_name] = FuncPrototype(func_name,
                                                       objc_func.type_ret,
@@ -90,13 +98,6 @@ def objc_is_dereferenceable(target_type):
     """Return True if target_type may be used as a pointer
     @target_type: ObjC"""
     return isinstance(target_type, (ObjCPtr, ObjCArray))
-
-
-def expr_to_types(c_handler, expr):
-    """Return the types of @expr, based on @c_handler knowledge"""
-    # XXX Temporary bug fix for c_handler.expr_to_types, as the current version
-    # does not support partial offsets
-    return [x.ctype for x in c_handler.access_c_gen.get_access(expr).info]
 
 
 class FuncPrototype(object):

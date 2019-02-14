@@ -1,6 +1,6 @@
 This file is part of Sibyl.
 
-Copyright 2014 - 2017 [Camille MOUGEY](mailto:camille.mougey@cea.fr)
+Copyright 2014 - 2019 [Camille MOUGEY](mailto:camille.mougey@cea.fr)
 
 
 Sibyl
@@ -130,6 +130,12 @@ Additionnaly, a method `launch_on_funcs` is provided for scripting purposes, and
 the result of the last run, in addition to the human output on console, is
 available in `sibyl_res` variable.
 
+### Binary Ninja stub
+
+An external stub for Binary Ninja is
+available [here](https://github.com/kenoph/binja_sibyl), maintained
+by [@kenoph](https://github.com/kenoph).
+
 Documentation
 -------------
 
@@ -142,14 +148,14 @@ A more detailed documentation is available in `doc`:
 * [Adding a new signature](doc/ADD_TEST.md)
 * [Adding a new ABI](doc/ADD_ABI.md)
 
-Current version is v0.1. See [changelog](doc/CHANGELOG.md) for more details.
+Current version is v0.2. See [changelog](doc/CHANGELOG.md) for more details.
 
 Installation
 ------------
 
 ### Standard
 
-_Sibyl_ requires at least _Miasm2_ version `67117bf` and the corresponding version of _Elfesteem_.
+_Sibyl_ requires at least _Miasm2_ version `v0.1.1` and the corresponding version of _Elfesteem_.
 For the `qemu` engine, the `unicorn` python package must be installed (refer to the documentation of Unicorn for more detail).
 
 _Sibyl_ comes as a Python module, and the installation follow the standard procedure:

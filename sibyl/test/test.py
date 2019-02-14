@@ -19,9 +19,15 @@ import random
 from miasm2.jitter.csts import PAGE_READ, PAGE_WRITE
 from miasm2.expression.modint import mod_size2int
 from miasm2.expression.simplifications import expr_simp
-from miasm2.core.objc import CTypesManagerNotPacked, CHandler
-from miasm2.core.ctypesmngr import CAstTypes
-from miasm2.arch.x86.ctype import CTypeAMD64_unk
+try:
+    import pycparser
+except ImportError:
+    pycparser = None
+else:
+    from miasm2.core.objc import CTypesManagerNotPacked, CHandler
+    from miasm2.core.ctypesmngr import CAstTypes
+    from miasm2.arch.x86.ctype import CTypeAMD64_unk
+
 from sibyl.commons import HeaderFile
 
 
@@ -276,13 +282,22 @@ class TestHeader(Test):
 
     def __init__(self, *args, **kwargs):
         super(TestHeader, self).__init__(*args, **kwargs)
+        # Requirement check
+        if pycparser is None:
+            raise ImportError("pycparser module is needed to launch tests based"
+                              "on header files")
+
         ctype_manager = CTypesManagerNotPacked(CAstTypes(), CTypeAMD64_unk())
 
         hdr = HeaderFile(self.header, ctype_manager)
         proto = hdr.functions[self.func]
-        self.c_handler = CHandler(hdr.ctype_manager,
-                                  {'arg%d_%s' % (i, name): proto.args[name]
-                                   for i, name in enumerate(proto.args_order)})
+        self.c_handler = CHandler(
+            hdr.ctype_manager,
+            {'arg%d_%s' % (i, name): set([proto.args[name]])
+             for i, name in enumerate(proto.args_order)}
+        )
+        self.expr_types_from_C = {'arg%d_%s' % (i, name): proto.args[name]
+                                  for i, name in enumerate(proto.args_order)}
         self.cache_sizeof = {}
         self.cache_trad = {}
         self.cache_field_addr = {}
@@ -290,14 +305,17 @@ class TestHeader(Test):
     def sizeof(self, Clike):
         ret = self.cache_sizeof.get(Clike, None)
         if ret is None:
-            ret = self.c_handler.c_to_type(Clike).size * 8
+            ret = self.c_handler.c_to_type(
+                Clike,
+                self.expr_types_from_C
+            ).size * 8
             self.cache_sizeof[Clike] = ret
         return ret
 
     def trad(self, Clike):
         ret = self.cache_trad.get(Clike, None)
         if ret is None:
-            ret = self.c_handler.c_to_expr(Clike)
+            ret = self.c_handler.c_to_expr(Clike, self.expr_types_from_C)
             self.cache_trad[Clike] = ret
         return ret
 
